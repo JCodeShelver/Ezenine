@@ -403,7 +403,7 @@ async def route(ctx, route = 0, confirm = 0):
             with open('/home/pi/Ezenine/users.json', 'r') as f:
                     users = json.load(f)
             
-            if all(entry in ["Total Darkness", "El Diablo", "Perfected Darkness"] for entry in [role.name for role in author.roles]):    
+            if all(entry in ["Total Darkness", "El Diablo", "Perfected Darkness"] for entry in [role.name for role in ctx.author.roles]):    
                 users[ctx.author.id]["route"] = route
                 users[ctx.author.id]["mcountlocked"] = 0
             else:
@@ -412,7 +412,7 @@ async def route(ctx, route = 0, confirm = 0):
             with open('/home/pi/Ezenine/users.json', 'w') as f:
                     json.dump(users, f)
             
-            await author.send(route4message)
+            await ctx.author.send(route4message)
     else:
         await ctx.send("You must have reached the Wisp of Death state to specialize your form!")
 
@@ -1161,6 +1161,8 @@ async def DnD(ctx):
                 deadlythreshold += xpthresholds[int(answer.content)][3]
                 
             # mxpthreshold = monster experience point threshold
+            mxpthreshold = 0
+            
             if int(dialog3.content) < 3:
                 if int(dialog5.content) == 1:
                     mxpthreshold = int(dialog7.content)*1.5
@@ -1207,7 +1209,7 @@ async def DnD(ctx):
             elif mxpthreshold >= hardthreshold and mxpthreshold < deadlythreshold:
                 dialog8 = await ctx.send("The encounter specified has a hard difficulty.")
                 killmsg.append(dialog8)
-            elif mxpthreshold == deadlythreshold or mxpthreshold > deadlythreshold:
+            elif mxpthreshold >= deadlythreshold:
                 dialog8 = await ctx.send("The encounter specified has a deadly difficulty.")
                 killmsg.append(dialog8)
             else:
@@ -1225,6 +1227,9 @@ async def DnD(ctx):
 # Reboot the Raspberry Pi
 @client.command()
 async def rebootsys(ctx):
+    # Setup sleepytime
+    sleepytime = 2
+
     # Generic Killmsg use for deletion of multiple messages.
     killmsg = []
     killmsg.append(ctx.message)
