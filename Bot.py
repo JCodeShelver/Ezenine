@@ -28,7 +28,6 @@ replyignore = []
 dmignore = []
 
 players = {}
-queues = {}
 
 # Deletes any messages within a hitlist.
 async def purgekillmsg(ctx, hitlist):
@@ -37,13 +36,6 @@ async def purgekillmsg(ctx, hitlist):
             await msg.delete()
             hitlist.remove(msg)
     await ctx.channel.delete_messages(hitlist)	# Purges remaining messages.
-    
-# Might need to change...
-def check_queue(id):
-    if queues[id] != []:
-        player = queues[id].pop[0]
-        players[id] = player
-        player.start()
 
 # Predicates, one for checking if the message is same author, same channel, the other is for same author, in the DMs
 def response(ctx):
@@ -94,9 +86,7 @@ async def on_message(message):
             await client.get_channel(464959332052762636).send(f"{message.author.name} said to me: {message.content}")
         else:
             pass
-    elif context.valid:	# Commands ignore the rest of the code.
-        pass
-    elif message in replyignore:
+    elif context.valid or (message in replyignore):	# Messages that invoke commands or are used in wait_fors are ignored.
         pass
     else:
         # If it's in the server, contribute to xp system.
@@ -511,117 +501,6 @@ async def masquerade(ctx, channel, *message):
     else:
         pass
             
-# Leave command. Check back on.
-@client.command()
-async def leave(ctx):
-    await ctx.message.delete()	# Generic deletion of command executed.
-
-    if "DJ" in [role.name for role in ctx.author.roles]:
-        try:
-            voice_client = client.voice_client_in(ctx.guild)
-            
-            await voice_client.disconnect()
-        except Exception:
-            dialog1 = await ctx.channel.send("There must be a voice channel for me to leave.")
-            
-            await asyncio.sleep(2)
-            
-            await dialog1.delete()
-            
-    else:
-        dialog2 = await ctx.channel.send("You don\'t have permission to use that command!")
-        
-        await asyncio.sleep(2)
-        
-        await dialog2.delete()
-        
-# Play command. Check back on.
-@client.command()
-async def play(ctx, url):
-    try:
-        try:
-            if not client.is_voice_connected(ctx.guild):
-                voice_channel = ctx.author.voice.voice_channel
-                
-                await client.join_voice_channel(voice_channel)
-        except Exception as error:
-            print (error)
-            
-            await ctx.channel.send("You must be in a voice channel in the server for me to play a song.")
-        
-        if players[ctx.guild.id].is_playing():
-            voice_client = client.voice_client_in(ctx.guild)
-            
-            player = await voice_client.create_ytdl_player(url, after = lambda: check_queue(ctx.guild.id))
-            
-            if ctx.guild.id in queues:
-                queues[ctx.guild.id].append(player)
-            else:
-                queues[ctx.guild.id] = [player]
-            
-            await ctx.channel.send("Song queued.")
-            await ctx.channel.send(url)
-        else:            
-            voice_client = client.voice_client_in(ctx.guild)
-            
-            player = await voice_client.create_ytdl_player(url, after = lambda: check_queue(ctx.guild.id))
-            
-            players[ctx.guild.id] = player
-            
-            player.start()
-            
-            await ctx.channel.send("Song started.")
-            await ctx.channel.send(url)
-    except:
-        voice_client = client.voice_client_in(ctx.guild)
-        
-        player = await voice_client.create_ytdl_player(url, after = lambda: check_queue(ctx.guild.id))
-        
-        players[ctx.guild.id] = player
-        
-        player.start()
-        
-        await ctx.channel.send("Song Queued.")
-        await ctx.channel.send(url)
-
-# Pause command. Check back on.
-@client.command()
-async def pause(ctx):
-    await ctx.message.delete()	# Generic deletion of command executed.
-
-    if "DJ" in [role.name for role in ctx.author.roles]:
-        players[ctx.guild.id].pause()
-    else:
-        dialog1 = await ctx.channel.send("You don\'t have permission to use that command!")
-        await asyncio.sleep(2)
-        await dialog1.delete()
-    
-# Stop command. Check back on.
-@client.command()
-async def stop(ctx):
-    await ctx.message.delete()	# Generic deletion of command executed.
-
-    if "DJ" in [role.name for role in ctx.author.roles]:
-        players[ctx.guild.id].stop()
-    else:
-        dialog1 = await ctx.channel.send("You don\'t have permission to use that command!")
-        await asyncio.sleep(2)
-        await dialog1.delete()
-    
-# Resume command. Check back on.
-@client.command()
-async def resume(ctx):
-    await ctx.message.delete()	# Generic deletion of command executed.
-
-    if "DJ" in [role.name for role in ctx.author.roles]:
-        id = ctx.guild.id
-        players[id].resume()
-    else:
-        dialog1 = await ctx.channel.send("You don\'t have permission to use that command!")
-        
-        await asyncio.sleep(2)
-        await dialog1.delete()
-        
 # Bans the specified person, DMs the reason, and deletes messages from them going *duration* days back.
 @client.command()
 async def ban(ctx, person, duration, *reason):

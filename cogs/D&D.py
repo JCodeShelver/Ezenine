@@ -63,7 +63,197 @@ class DnD(commands.Cog):
             total = str(total)
             await ctx.send(f"{ctx.author.mention}: `{ctx.message.content[6:]}` ({result})  =  {total}")
 
-    # D&D thing that probably should be split up.
+    # Character Sheet Manager
+    @commands.command()
+    async def cSheetMgr(self, ctx):
+        replyignore = []
+
+        killmsg = []
+        killmsg.append(ctx.message)
+
+        async def findSID(reqSID, sessions):
+            sIndex = -1
+
+            for index in range(len(sessions)):
+                if sessions[index]["ID: "] == reqSID:
+                    if sessions[index]["DM: "] == ctx.author.name:
+                        sIndex = index
+                        break
+                    else:
+                        await ctx.send("The requested session was not made by you!")
+                
+                if index + 1 == len(sessions):
+                    await ctx.send("The requested ID is not associated to any sessions.")
+
+            return sIndex
+        
+        options = await ctx.send("Options to use include are: `save` to update an entry of a session, `load` a previously saved session, or `new` to create a new entry. Type `cancel` to exit. In the case yhou need to delete a previously made entry, use `delete`.")
+        killmsg.append(options)
+        
+        mode = await self.client.wait_for("message", check = self.response(ctx))
+        replyignore.append(mode)
+        killmsg.append(mode)
+                                        
+        if mode.content.lower() == "save":                        
+            with open('/home/pi/Ezenine/dnd.json', 'r') as f:
+                sessions = json.load(f)
+            
+            botmsg = await ctx.send("Please enter your session id: ")
+            killmsg.append(botmsg)
+            
+            reqSID = await self.client.wait_for("message", check = self.response(ctx))
+            replyignore.append(reqSID)
+            killmsg.append(reqSID)
+            
+            sIndex = await findSID(reqSID.content, sessions)
+            
+            if sIndex != -1:
+                botmsg = await ctx.send("Is this your session?")
+                killmsg.append(botmsg)
+
+                confirmation = await ctx.author.send(sessions[sIndex])
+                killmsg.append(confirmation)
+                
+                if confirmation.content.lower() in ["yes", "y"]:
+                    botmsg = await ctx.send("What character would you like to modify?")
+                    killmsg.append(botmsg)
+                    
+                    modify = await self.client.wait_for("message", check = self.response(ctx))
+                    replyignore.append(modify)
+                    killmsg.append(modify)
+                    
+                    if int(modify.content) <= int(sessions[sIndex]["Number of Players: "]):
+                        botmsg = await ctx.send(f"Enter player {modify.content}\'s character: ")
+                        killmsg.append(botmsg)
+                        
+                        entry = await self.client.wait_for("message", check = self.response(ctx))
+                        replyignore.append(entry)
+                        killmsg.append(entry)
+                        
+                        sessions[sIndex]["Description of Players: "][int(modify.content)] = entry.content
+                        
+                        with open('/home/pi/Ezenine/dnd.json', 'w') as f:
+                            json.dump(sessions, f)
+                        
+                        botmsg = await ctx.send("Your session has been successfully saved!")
+                        killmsg.append(botmsg)
+                else:
+                    botmsg = await ctx.send("Session edit canceled.")
+                    killmsg.append(botmsg)
+
+        elif mode.content.lower() == "new":                        
+            with open('/home/pi/Ezenine/dnd.json', 'r') as f:
+                sessions = json.load(f)
+            
+            botmsg = await ctx.send("Enter the name/number of your session (you need this to access it in the future): ")
+            killmsg.append(botmsg)
+
+            SID = await self.client.wait_for ("message", check = self.response(ctx)) # Session ID
+            replyignore.append(SID)
+            killmsg.append(SID)
+            
+            botmsg = await ctx.send("Enter the number of players: ")
+            killmsg.append(botmsg)
+            
+            plnum = await self.client.wait_for("message", check = self.response(ctx)) # Number of players
+            replyignore.append(plnum)
+            killmsg.append(plnum)
+            
+            pldes = [] # Description of players
+            
+            # Ask for description of each player then append to pldes
+            for player in range(int(plnum.content)):
+                botmsg = await ctx.send(f"Enter the player{player + 1}\'s character: ")
+                killmsg.append(botmsg)
+                
+                entry = await self.client.wait_for("message", check = self.response(ctx))
+                replyignore.append(entry)
+                killmsg.append(entry)
+                
+                pldes.append(entry.content)
+            
+            currsession = {"Number of Players: ": plnum.content, 
+                            "Description of Players: ": pldes, 
+                            "DM: ": ctx.author.name, 
+                            "ID: ": SID.content}
+            sessions.append(currsession)
+
+            with open('/home/pi/Ezenine/dnd.json', 'w') as f:
+                json.dump(sessions, f)
+
+            botmsg = await ctx.send("Your session has been created!")
+            killmsg.append(botmsg)
+            
+        elif mode.content.lower() == "load":                        
+            with open('/home/pi/Ezenine/dnd.json', 'r') as f:
+                sessions = json.load(f)
+            
+            botmsg = await ctx.send("Enter your session id please: ")
+            killmsg.append(botmsg)
+            
+            SID = await self.client.wait_for("message", check = self.response(ctx))
+            replyignore.append(SID)
+            killmsg.append(SID)
+
+            sIndex = await findSID(SID.content, sessions)
+            
+            if sIndex != -1:
+                session = f"Number of Players: {sessions[sIndex]['Number of Players: ']}\nDescriptions:\n"
+                    
+                for player in range(int(sessions[sIndex]["Number of Players: "])):
+                    session += f"{sessions[sIndex]['Description of Players: '][player]}\n\n"
+
+                await ctx.author.send(session)
+
+        elif mode.content.lower() == "delete":
+            with open('/home/pi/Ezenine/dnd.json', 'r') as f:
+                sessions = json.load(f)
+            
+            botmsg = await ctx.send("What is your session id?")
+            killmsg.append(botmsg)
+            
+            session = await self.client.wait_for("message", check = self.response(ctx))
+            replyignore.append(session)
+            killmsg.append(session)
+
+            sIndex = await findSID(session.content, sessions)
+            
+            if sIndex != -1:
+                if ctx.author.name == sessions[sIndex]["DM: "]:
+                    seshconfirm = f"Number of Players: {sessions[sIndex]['Number of Players: ']}\nDescriptions: \n"
+                    
+                    for player in range(int(sessions[sIndex]["Number of Players: "])):
+                        seshconfirm += f"{sessions[sIndex]['Description of Players: '][player]}\n\n"
+
+                    botmsg = await ctx.author.send(seshconfirm)
+                    killmsg.append(botmsg)
+
+                    botmsg = await ctx.send("Is this the session you wished to delete?")
+                    killmsg.append(botmsg)
+                    
+                    confirm = await self.client.wait_for("message", check = self.response(ctx))
+                    replyignore.append(confirm)
+                    killmsg.append(confirm)
+                    
+                    if confirm.content.lower() in ["yes", "y"]:
+                        sessions.pop(sIndex)
+                        
+                        with open('/home/pi/Ezenine/dnd.json', 'w') as f:
+                            json.dump(sessions, f)
+                        
+                        botmsg = await ctx.send("Your session has been successfully p u r g e d.")
+                        killmsg.append(botmsg)
+
+        elif mode.content.lower() == "cancel":                        
+            pass
+        else:                        
+            pass
+
+        await asyncio.sleep(2)
+        
+        await self.purgekillmsg(ctx, killmsg)
+        
+    # DnD command (In progress of splitting up.)
     @commands.command()
     async def DnD(self, ctx):
         replyignore = []
@@ -72,7 +262,20 @@ class DnD(commands.Cog):
         killmsg = []
         killmsg.append(ctx.message)
         
-        subsections = ["char sheets", "encounter", "monsters", "classes", "races", "backgrounds", "items", "weapons", "armor", "shields", "rules"]
+        async def findSID(reqSID, sessions):
+            sIndex = -1
+            for index in sessions:
+                if sessions[index]["ID: "] == reqSID.content:
+                    if sessions[index]["DM: "] == ctx.author:
+                        sIndex = index
+                        break
+                    else:
+                        await ctx.send("The requested session was not made by you!")
+                else:
+                    await ctx.send("The requested ID is not associated to any sessions.")
+            return sIndex
+
+        subsections = ["`encounter`", "`monsters`", "`classes`", "`races`", "`backgrounds`", "`items`", "`weapons`", "`armor`", "`shields`", "`rules`"]
         
         dialog1 = await ctx.send(f"What would you like to create or modify? Valid choices include: {str(subsections)[1:-1].replace(',', '').upper()}")
         killmsg.append(dialog1)
@@ -81,188 +284,8 @@ class DnD(commands.Cog):
         replyignore.append(subsection)
         killmsg.append(subsection)
         
-        if subsection.content.lower() in subsections:
-            if subsection.content.lower() == "char sheets":
-                del subsection.content
-                
-                dialog2 = await ctx.send("Options to use include are: `save` to update an entry of a session, `load` a previously saved session, or `new` to create a new entry. Type `cancel` to exit. In the case yhou need to delete a previously made entry, use `delete`.")
-                killmsg.append(dialog2)
-                
-                mode = await self.client.wait_for("message", check = self.response(ctx))
-                replyignore.append(mode)
-                killmsg.append(mode)
-                
-                options = ["load", "new", "cancel", "save", "delete"]
-                
-                done = False
-                
-                while done == False and mode.content.lower() != "":
-                    if mode.content.lower() == "save":
-                        del mode.content
-                        
-                        with open('/home/pi/Ezenine/dnd.json', 'r') as f:
-                            sessions = json.load(f)
-                        
-                        dialog3 = await ctx.send("Please enter your session id: ")
-                        killmsg.append(dialog3)
-                        
-                        reqsessionid = await self.client.wait_for("message", check = self.response(ctx))
-                        replyignore.append(reqsessionid)
-                        killmsg.append(reqsessionid)
-                        
-                        dialog4 = await ctx.send("Is this your session?")
-                        killmsg.append(dialog4)
-                        
-                        confirmation = await ctx.author.send(sessions[reqsessionid.content])
-                        killmsg.append(confirmation)
-                        
-                        if confirmation.content.lower() in ["yes", "y"]:
-                            dialog5 = await ctx.send("What character would you like to modify?")
-                            killmsg.append(dialog5)
-                            
-                            modify = await self.client.wait_for("message", check = self.response(ctx))
-                            replyignore.append(modify)
-                            killmsg.append(modify)
-                            
-                            if int(modify.content) <= int(sessions[reqsessionid]["Number of Players: "]):
-                                dialog6 = await ctx.send(f"Enter the player{modify.content}\'s character: ")
-                                killmsg.append(dialog6)
-                                
-                                entry = await self.client.wait_for("message", check = self.response(ctx))
-                                replyignore.append(entry)
-                                killmsg.append(entry)
-                                
-                                sessions[reqsessionid]["Description of Players: "] = entry.content
-                                
-                                with open('/home/pi/Ezenine/dnd.json', 'w') as f:
-                                    json.dump(sessions, f)
-                                
-                                dialog7 = await ctx.send("Your session has been successfully saved!")
-                                killmsg.append(dialog7)
-                        else:
-                            dialog8 = await ctx.send("Session edit canceled.")
-                            killmsg.append(dialog8)
-                            
-                        done = True
-                    elif mode.content.lower() == "new":
-                        del mode.content
-                        
-                        with open('/home/pi/Ezenine/dnd.json', 'r') as f:
-                            sessions = json.load(f)
-                        
-                        dialog9 = await ctx.send("Enter number of players: ")
-                        killmsg.append(dialog9)
-                        
-                        plnum = await self.client.wait_for("message", check = self.response(ctx)) # Number of players
-                        replyignore(plnum)
-                        killmsg.append(plnum)
-                        
-                        pldes = [] # Description of players
-                        
-                        # Ask for description of each player then append to pldes
-                        for player in range(int(plnum.content)):
-                            dialog = await ctx.send(f"Enter the player{player + 1}\'s character: ")
-                            killmsg.append(dialog)
-                            
-                            entry = await self.client.wait_for("message", check = self.response(ctx))
-                            replyignore.append(entry)
-                            killmsg.append(entry)
-                            
-                            
-                            pldes.append(entry.content)
-                        
-                        currsession = {"Number of Players: ": plnum.content, "Description of Players: ": pldes, "DM: ": ctx.author.name}
-                        
-                        # Null mechanic. Deleting a session currently replaces it with null to keep indexes the same. Need to fix.
-                        fns = False
-                        nsindex = 0
-                        
-                        for session in range(len(sessions)):
-                            if session["null"] == "null":
-                                fns = True # Found null session
-                                nsindex = sessions.index(session) # Null session index
-                                break
-                        
-                        if not fns:
-                            sessions.append(currsession)
-                        else:
-                            sessions[nsindex] = currsession
-                        # Null mechanic end.
-                        
-                        dialog10 = await ctx.send(f"Your session id is: {str(sessions.index(currsession))}")
-                        killmsg.append(dialog10)
-                        
-                        with open('/home/pi/Ezenine/dnd.json', 'w') as f:
-                            json.dump(sessions, f)
-                        
-                        done = True
-                    elif mode.content.lower() == "load":
-                        del mode.content
-                        
-                        dialog11 = await ctx.send("Enter your session id please: ")
-                        killmsg.append(dialog11)
-                        
-                        id = await self.client.wait_for("message", check = self.response(ctx))
-                        replyignore.append(id)
-                        killmsg.append(id)
-                        
-                        with open('/home/pi/Ezenine/dnd.json', 'r') as f:
-                            sessions = json.load(f)
-                        
-                        await ctx.author.send(f"Loading session #{id.content}: Just a sec...")
-                        
-                        await asyncio.sleep(2)
-                        
-                        await ctx.author.send(f"Author: {sessions[int(id.content)]['DM: ']}\nNumber of Players: {sessions[int(id.content)]['Number of Players: ']}\nDescriptions: ")
-                    
-                        for players in range(int(sessions[int(id.content)]["Number of Players: "])):
-                            await ctx.author.send(sessions[int(id.content)]["Description of Players: "][players])
-                        
-                        done = True
-                    elif mode.content.lower() == "delete":
-                        del mode.content
-                        
-                        dialog12 = await ctx.send("What is your session id?")
-                        killmsg.append(dialog12)
-                        
-                        session = await self.client.wait_for("message", check = self.response(ctx))
-                        replyignore.append(session)
-                        killmsg.append(session)
-                        
-                        with open('/home/pi/Ezenine/dnd.json', 'r') as f:
-                            sessions = json.load(f)
-                        
-                        if ctx.author.name == sessions[int(session.content)]["DM: "]:
-                            await ctx.author.send(f"If this was your desired session to delete, continue.\nNumber of Players: {sessions[int(session.content)]['Number of Players: ']}\nDescriptions: ")
-                            
-                            for players in range(int(sessions[int(session.content)]["Number of Players: "])):
-                                await ctx.author.send(sessions[int(session.content)]["Description of Players: "][players])
-                                await ctx.author.send("-------------------------------------------")
-                            
-                            dialog13 = await ctx.send("Are you sure?")
-                            killmsg.append(dialog13)
-                            
-                            confirm = await self.client.wait_for("message", check = self.response(ctx))
-                            replyignore.append(confirm)
-                            killmsg.append(confirm)
-                            
-                            if confirm.content.lower in ["yes", "y"]:
-                                # Currently just adds a null field with value null, keeping the number of sessions the same, so other's indices are the same. Need to change.
-                                sessions[int(session.content)]["null"] = "null"
-                                
-                                with open('/home/pi/Ezenine/dnd.json', 'w') as f:
-                                    json.dump(sessions, f)
-                        
-                        done = True
-                    elif mode.content.lower() == "cancel":
-                        del mode.content
-                        
-                        done = True
-                    else:
-                        del mode.content
-                        
-                        done = True
-            elif subsection.content.lower() == "encounter":
+        if subsection.content.lower() in subsections:                
+            if subsection.content.lower() == "encounter":
                 dialog2 = await ctx.send("How many party members are playing?")
                 killmsg.append(dialog2)
                 
