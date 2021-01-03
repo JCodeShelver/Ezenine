@@ -1,7 +1,6 @@
 import discord
 from discord.ext import commands
 import asyncio
-import youtube_dl
 import random
 import json
 import os
@@ -291,6 +290,15 @@ async def rank_up(users, user, channel):
 # endregion XP Functions
 
 #region Commands
+
+# Close Bot correctly.
+@client.command()
+async def close(ctx):
+    if ctx.voice_client:
+        await ctx.voice_client.disconnect()
+    
+    await client.close()
+    await client.logout()
 
 # # F U N....
 # @client.command(hidden=True, enabled=False)
@@ -886,5 +894,9 @@ async def reload_cog(ctx, *, cog: str):
     client.reload_extension(f"cogs.{cog}")
 
 #endregion Commands
+
+for file in os.listdir("./cogs"):
+    if file.endswith(".py"):
+        client.load_extension(f'cogs.{file[:-3]}')
 
 client.run(token)
