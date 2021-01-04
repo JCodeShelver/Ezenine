@@ -26,6 +26,8 @@ mac = "93375B48D6" # Maintenence Access Code
 replyignore = []
 dmignore = []
 
+cogsOnStart = ['cogs.D&D', 'cogs.XP', 'cogs.voice']
+
 players = {}
 
 # Deletes any messages within a hitlist.
@@ -895,8 +897,7 @@ async def reload_cog(ctx, *, cog: str):
 
 #endregion Commands
 
-for file in os.listdir("./cogs"):
-    if file.endswith(".py"):
-        client.load_extension(f'cogs.{file[:-3]}')
+for cog in cogsOnStart:
+    client.load_extension(cog)
 
 client.run(token)
