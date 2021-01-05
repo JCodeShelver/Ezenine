@@ -6,7 +6,7 @@ import json
 import os
 import logging
 
-logging.basicConfig(level = logging.INFO)
+logging.basicConfig(level = logging.WARNING)
 
 intents = discord.Intents.default()
 intents.members = True
