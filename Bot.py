@@ -6,14 +6,15 @@ import json
 import os
 import logging
 
-logging.basicConfig(level = logging.WARNING)
+with open('/home/pi/Ezenine/botSettings.json', 'r') as f:
+    settings = json.load(f)
+
+logging.basicConfig(level = eval(settings["logLevel"]))
 
 intents = discord.Intents.default()
 intents.members = True
 
-client = commands.Bot(command_prefix = ".", intents = intents)
-
-token = "NDc1NDIxOTUxOTM0OTg4Mjg4.DlDZBA.9VlFx9_KqQz_oow6D-3snUtnUL8"
+client = commands.Bot(command_prefix = settings["prefix"], intents = intents, owner_id = 409452148510949408)
 
 route4message = """You have discovered an ancient way to becoming the fabled Shadenrow, or Shadow Folk. \
 Don't tell people how you have got here, otherwise the secrets of the Shadenrow will be forever lost to you. \
@@ -21,12 +22,11 @@ You can become Shadenrow only after climbing all other ladders, and your message
 You must amass a total of 9 Million messages to reach Shadenrow status. \
 Switching to other paths before reaching Shadenrow resets your message count to 50000. Good Luck."""
 
-sac = "73298462" # Standardized Access Code
-mac = "93375B48D6" # Maintenence Access Code
+sac = settings["sac"]
+mac = settings["mac"]
+
 replyignore = []
 dmignore = []
-
-cogsOnStart = ['cogs.D&D', 'cogs.XP', 'cogs.voice']
 
 players = {}
 
@@ -61,7 +61,7 @@ gamebook = {
          "with cats",
          "with humans"]}
 
-chat_filter = ["NIGGA", "FAG", "NIGGER"]
+chat_filter = ["NIGGA", "FAG", "NIGGER", "FUCK", "PEPE", "YEET"]
 bypass_list = [409452148510949408, 469129991544766475]
 
 #region Events
@@ -105,7 +105,7 @@ async def on_message(message):
         
         # Chat filter
         contents = message.content.split(" ")
-        for word in contents:
+        for word in message:
             if word.upper() in chat_filter:
                 if not message.author.id in bypass_list:
                     try:
@@ -295,31 +295,13 @@ async def rank_up(users, user, channel):
 
 # Close Bot correctly.
 @client.command()
+@commands.is_owner()
 async def close(ctx):
     if ctx.voice_client:
         await ctx.voice_client.disconnect()
     
     await client.close()
     await client.logout()
-
-# # F U N....
-# @client.command(hidden=True, enabled=False)
-# async def fun(ctx):
-#     if ctx.guild.id == 700704510099587092:
-#         dialog1 = ctx.send("ARE YOU FUCKING SURE YOU CRAZY FUCK?! (Y/N): ")
-#         confirm = await client.wait_for("message", check=response)
-#         if confirm.lower() in ["yes", "y"]:
-#             ctx.send("ARE YOU THOUGH?")
-#             confirm = await client.wait_for("message", check=response)
-#             if confirm.lower() in ["yes", "y"]:
-#                 ctx.send("I warned you... I'll give you 15 seconds to hard interrupt this program though...")
-#                 await asyncio.sleep(15)
-#                 for person in client.get_guild(700704510099587092):
-#                     try:
-#                         await person.ban()
-#                     except:
-#                         pass
-
 
 # A simple ping command
 @client.command()
@@ -342,12 +324,13 @@ async def echo(ctx, *args):
 async def clear(ctx, amount = 10):
     await ctx.message.delete()	# Generic deletion of command executed
     
+    amount = int(round(amount))
     # Find the specified number of messages within the channel the command was executed and delete them.
     if ctx.author.id in [409452148510949408, 469129991544766475]:
         if amount > 100:
             amount = 100
         
-        await ctx.channel.purge(limit = int(round(amount)))
+        await ctx.channel.purge(limit = amount)
     else:
         return
         
@@ -375,70 +358,6 @@ async def msgcount(ctx, person = ""):
                 json.dump(users, f)
         
         await ctx.send(f"{ctx.author.mention}, {target.display_name}\'s message count is: {str(users[str(target.id)]['messages'])}")
-
-# Choose branch of roles to continue to.
-@client.command()
-async def route(ctx, route = 0, confirm = 0):
-    await ctx.message.delete() # Generic deletion of command executed
-
-    if "Wisp of Darkness" in [role.name for role in ctx.author.roles]:
-        if not confirm:	# Display info if confirm is 0
-            await ctx.send("This resets your progress on a route if you are switching routes, but does not if you completed it, and you lose all roles associated with that route! Execute the command like this to continue: `.route <route> 1`")
-        
-        if confirm and int(route) in [1, 2, 3]:
-            try:
-                # Open User info, and either changes route, resetting if not completed, or enters a route.
-                with open('/home/pi/Ezenine/users.json', 'r') as f:
-                    users = json.load(f)
-                
-                if (int(route) == 1 and "Total Darkness" in [role.name for role in ctx.author.roles]) or \
-                   (int(route) == 2 and "El Diablo" in [role.name for role in ctx.author.roles]) or \
-                   (int(route) == 3 and "Perfected Darkness" in [role.name for role in ctx.author.roles]):
-                    users[ctx.author.id]["route"] = route
-                    users[ctx.author.id]["mcountlocked"] = 0
-                    users[ctx.author.id]["messages"] = 50000
-                elif int(route) == 3 and ("Total Darkness" not in [role.name for role in ctx.author.roles] or "El Diablo" not in [role.name for role in ctx.author.roles]):
-                    ctx.send("You must have conquered the merging with Darkness, and survived the depths of Hell. (Must have done routes 1 & 2)")
-                else:
-                    users[ctx.author.id]["route"] = route
-                    users[ctx.author.id]["mcountlocked"] = 0
-                    users[ctx.author.id]["messages"] = 50000
-                    
-                    role1 = discord.utils.get(ctx.guild.roles, name = "Shadow")
-                    role2 = discord.utils.get(ctx.guild.roles, name = "Void")
-                    role3 = discord.utils.get(ctx.guild.roles, name = "Perfected Darkness")
-                    role4 = discord.utils.get(ctx.guild.roles, name = "El Diablo")
-                    role5 = discord.utils.get(ctx.guild.roles, name = "Corrupt Demon Spawn")
-                    role6 = discord.utils.get(ctx.guild.roles, name = "Draconic")
-                    role7 = discord.utils.get(ctx.guild.roles, name = "Follower of Flame")
-                    role8 = discord.utils.get(ctx.guild.roles, name = "Total Darkness")
-                    role9 = discord.utils.get(ctx.guild.roles, name = "Umbral")
-                    role10 = discord.utils.get(ctx.guild.roles, name = "Penumbral")                
-                    
-                    await ctx.author.remove_roles(role1, role2, role3, role4, role5, role6, role7, role8, role9, role10)
-                
-                with open('/home/pi/Ezenine/users.json', 'w') as f:
-                    json.dump(users, f)
-            except:
-                pass
-        elif route == 0:	# Displays info when executed w/o specifications.
-            await ctx.send("Choose a route: 1 for One with Darkness (OwD), 2 for Hell route, and 3 for Authority route.")
-        elif route == 4:	# Shadenrow Code, check for max role on routes 1-3, then proceeds.
-            with open('/home/pi/Ezenine/users.json', 'r') as f:
-                    users = json.load(f)
-            
-            if all(entry in ["Total Darkness", "El Diablo", "Perfected Darkness"] for entry in [role.name for role in ctx.author.roles]):    
-                users[ctx.author.id]["route"] = route
-                users[ctx.author.id]["mcountlocked"] = 0
-            else:
-                pass
-            
-            with open('/home/pi/Ezenine/users.json', 'w') as f:
-                    json.dump(users, f)
-            
-            await ctx.author.send(route4message)
-    else:
-        await ctx.send("You must have reached the Wisp of Death state to specialize your form!")
 
 # Checks *limit* amount of messages in *channel*, and deletes those from *person*.
 @client.command()
@@ -882,22 +801,25 @@ async def summon(ctx):
 
 # Loads a cog
 @client.command()
+@commands.is_owner()
 async def load_cog(ctx, *, cog: str):
     client.load_extension(f"cogs.{cog}")
 
 # Unloads a cog
 @client.command()
+@commands.is_owner()
 async def unload_cog(ctx, *, cog: str):
     client.unload_extension(f"cogs.{cog}")
 
 # Reloads a cog
 @client.command()
+@commands.is_owner()
 async def reload_cog(ctx, *, cog: str):
     client.reload_extension(f"cogs.{cog}")
 
 #endregion Commands
 
-for cog in cogsOnStart:
+for cog in settings["cogsOnStartup"]:
     client.load_extension(cog)
 
-client.run(token)
+client.run(settings["token"])
