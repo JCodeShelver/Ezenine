@@ -16,12 +16,6 @@ intents.members = True
 
 client = commands.Bot(command_prefix = settings["prefix"], intents = intents, owner_id = 409452148510949408)
 
-route4message = """You have discovered an ancient way to becoming the fabled Shadenrow, or Shadow Folk. \
-Don't tell people how you have got here, otherwise the secrets of the Shadenrow will be forever lost to you. \
-You can become Shadenrow only after climbing all other ladders, and your message count will remain locked until then. \
-You must amass a total of 9 Million messages to reach Shadenrow status. \
-Switching to other paths before reaching Shadenrow resets your message count to 50000. Good Luck."""
-
 sac = settings["sac"]
 mac = settings["mac"]
 
@@ -95,8 +89,8 @@ async def on_message(message):
             with open('/home/pi/Ezenine/users.json', 'r') as f:
                 users = json.load(f)
 
-            await update_data(users, message.author)
-            await add_experience(users, message.author, 5)
+            update_data(users, message.author, True)
+            add_experience(users, message.author, 5)
             await level_up(users, message.author, message.channel)
             await rank_up(users, message.author, message.channel)
 
@@ -104,10 +98,8 @@ async def on_message(message):
                 json.dump(users, f)
         
         # Chat filter
-        contents = message.content.split(" ")
-        for word in message:
-            if word.upper() in chat_filter:
-                if not message.author.id in bypass_list:
+        for word in chat_filter:
+            if word in message.content and message.author.id not in bypass_list:
                     try:
                         await message.delete()
                         await message.channel.send(f"**Hey {message.author.mention}!** You\'re not allowed to use that word here!")
@@ -124,7 +116,7 @@ async def on_member_join(member):
     with open('/home/pi/Ezenine/users.json', 'r') as f:
         users = json.load(f)
 
-    await update_data(users, member)
+    update_data(users, member, False)
     
     with open('/home/pi/Ezenine/users.json', 'w') as f:
         json.dump(users, f)
@@ -132,6 +124,17 @@ async def on_member_join(member):
 @client.event
 async def on_member_remove(member):
     await client.get_channel(505781896014331905).send(f"{member.mention} left the server. :(")
+
+@client.event
+async def on_member_update(before, after):
+    if before.nick != after.nick:
+        with open('/home/pi/Ezenine/users.json', 'r') as f:
+            users = json.load(f)
+        
+        users[str(after.id)]["nickname"] = after.nick
+
+        with open('/home/pi/Ezenine/users.json', 'w') as f:
+            json.dump(users, f) 
 
 @client.event
 async def on_member_ban(guild, member):
@@ -146,31 +149,25 @@ async def on_member_unban(guild, member):
 #region XP Functions
 
 # Updates the users.json file for a user.
-async def update_data(users, user):
-    if not str(user.id) in users:	# If a user is not present in the list, make an entry for them.
-        users[str(user.id)] = {}
+def update_data(users: dict, user: discord.Member, sentMessage: bool = False):
+    # If a user is not present in the list, make an entry for them.
+    if not str(user.id) in users:
+        users[str(user.id)] = {}    # Add an array with their user id associated to it.
         users[str(user.id)]["name"] = user.name
         try:
             users[str(user.id)]["nickname"] = user.nick
         except Exception:
             pass
         users[str(user.id)]["experience"] = 0
-        users[str(user.id)]["level"] = 1
+        users[str(user.id)]["level"] = 1    # Start at level 1 because level 0 would break the level_up command.
         users[str(user.id)]["messages"] = 0
-        users[str(user.id)]["mcountlocked"] = 0
-        users[str(user.id)]["route"] = 0
-    else:
-        # If they are, count messages if mcount isn't locked, and update whether it should be locked.
-        if not users[str(user.id)]["mcountlocked"]:
-            users[str(user.id)]["messages"] += 1
-            
-        if "Wisp of Darkness" in [role.name for role in user.roles]:
-            users[str(user.id)]["mcountlocked"] = 1
-        else:
-            users[str(user.id)]["mcountlocked"] = 0
+    
+    if sentMessage:
+        # If they actually sent a message (not being checked by msgcount), count messages
+        users[str(user.id)]["messages"] += 1
 
 # Increments a user's exp.
-async def add_experience(users, user, exp):
+def add_experience(users, user, exp):
     users[str(user.id)]["experience"] += exp
 
 # Checks whether a user should level up.
@@ -191,103 +188,55 @@ async def rank_up(users, user, channel):
     # Get the user's msg count, roles, and route.
     messages = users[str(user.id)]["messages"]
     roles = user.roles
-    route = users[str(user.id)]["route"]
     
-    if route == 1:
-        if messages == 575000:
-            role1 = discord.utils.get(user.guild.roles, name = "Total Darkness")
-            role2 = discord.utils.get(user.guild.roles, name = "Umbral")
-            roles[roles.index(role2)] = role1
-            
-            await user.edit(roles)
-        elif messages == 300000:
-            role1 = discord.utils.get(user.guild.roles, name = "Umbral")
-            role2 = discord.utils.get(user.guild.roles, name = "Penumbral")
-            roles[roles.index(role2)] = role1
-            
-            await user.edit(roles)
-        elif messages == 135000:
-            role = discord.utils.get(user.guild.roles, name = "Penumbral")
-            
-            await user.add_roles(role)
-    elif route == 2:
-        if messages == 666666:
-            role1 = discord.utils.get(user.guild.roles, name = "El Diablo")
-            role2 = discord.utils.get(user.guild.roles, name = "Corrupt Demon Spawn")
-            roles[roles.index(role2)] = role1
-            
-            await user.edit(roles)
-        elif messages == 475000:
-            role1 = discord.utils.get(user.guild.roles, name = "Corrupt Demon Spawn")
-            role2 = discord.utils.get(user.guild.roles, name = "Draconic")
-            roles[roles.index(role2)] = role1
-            
-            await user.edit(roles)
-        elif messages == 275050:
-            role1 = discord.utils.get(user.guild.roles, name = "Draconic")
-            role2 = discord.utils.get(user.guild.roles, name = "Follower of Flame")
-            roles[roles.index(role2)] = role1
-            
-            await user.edit(roles)
-        elif messages == 100000:
-            role = discord.utils.get(user.guild.roles, name = "Follower of Flame")
-            
-            await user.add_roles(role)
-    elif route == 3:
-        if messages == 1000000:
-            role1 = discord.utils.get(user.guild.roles, name = "Pefected Darkness")
-            role2 = discord.utils.get(user.guild.roles, name = "Void")
-            roles[roles.index(role2)] = role1
-            
-            await user.edit(roles)
-        elif messages == 500000:
-            role1 = discord.utils.get(user.guild.roles, name = "Void")
-            role2 = discord.utils.get(user.guild.roles, name = "Shadow")
-            roles[roles.index(role2)] = role1
-            
-            await user.edit(roles)
-        elif messages == 175000:
-            role = discord.utils.get(user.guild.roles, name = "Shadow")
-            
-            await user.add_roles(role)
-    elif route == 4:
-        if messages == 9000000:
-            role = discord.utils.get(user.guild.roles, name = "Shadenrow")
-            
-            await user.add_roles(role)
-    elif route == 0:
-        if messages == 50000:
-            role1 = discord.utils.get(user.guild.roles, name = "Wisp of Death")
-            role2 = discord.utils.get(user.guild.roles, name = "Blossoming Darkness")
-            roles[roles.index(role2)] = role1
-            
-            await user.edit(roles)
-            
-            users[str(user.id)]["mcountlocked"] = 1
-        elif messages == 15000:
-            role1 = discord.utils.get(user.guild.roles, name = "Blossoming Darkness")
-            role2 = discord.utils.get(user.guild.roles, name = "Asset of the Void")
-            roles[roles.index(role2)] = role1
-            
-            await user.edit(roles)
-        elif messages == 5000:
-            role1 = discord.utils.get(user.guild.roles, name = "Asset of the Void")
-            role2 = discord.utils.get(user.guild.roles, name = "Ghost of Shadows")
-            roles[roles.index(role2)] = role1
-            
-            await user.edit(roles)
-        elif messages == 1750:
-            role1 = discord.utils.get(user.guild.roles, name = "Ghost of Shadows")
-            role2 = discord.utils.get(user.guild.roles, name = "Dim Soul")
-            roles[roles.index(role2)] = role1
-            
-            await user.edit(roles)
-        elif messages == 100:
-            role1 = discord.utils.get(user.guild.roles, name = "Dim Soul")
-            role2 = discord.utils.get(user.guild.roles, name = "Bright Soul")
-            roles[roles.index(role2)] = role1
-    
-            await user.edit(roles)
+    if messages == 575000:
+        role1 = discord.utils.get(user.guild.roles, name = "Total Darkness")
+        role2 = discord.utils.get(user.guild.roles, name = "Umbral")
+        roles[roles.index(role2)] = role1
+        
+        await user.edit(roles)
+    elif messages == 300000:
+        role1 = discord.utils.get(user.guild.roles, name = "Umbral")
+        role2 = discord.utils.get(user.guild.roles, name = "Penumbral")
+        roles[roles.index(role2)] = role1
+        
+        await user.edit(roles)
+    elif messages == 135000:
+        role1 = discord.utils.get(user.guild.roles, name = "Penumbral")
+        role2 = discord.utils.get(user.guild.roles, name = "Wisp of Death")
+        roles[roles.index(role2)] = role1
+
+        await user.edit(roles)       
+    elif messages == 50000:
+        role1 = discord.utils.get(user.guild.roles, name = "Wisp of Death")
+        role2 = discord.utils.get(user.guild.roles, name = "Blossoming Darkness")
+        roles[roles.index(role2)] = role1
+        
+        await user.edit(roles)
+    elif messages == 15000:
+        role1 = discord.utils.get(user.guild.roles, name = "Blossoming Darkness")
+        role2 = discord.utils.get(user.guild.roles, name = "Asset of the Void")
+        roles[roles.index(role2)] = role1
+        
+        await user.edit(roles)
+    elif messages == 5000:
+        role1 = discord.utils.get(user.guild.roles, name = "Asset of the Void")
+        role2 = discord.utils.get(user.guild.roles, name = "Ghost of Shadows")
+        roles[roles.index(role2)] = role1
+        
+        await user.edit(roles)
+    elif messages == 1750:
+        role1 = discord.utils.get(user.guild.roles, name = "Ghost of Shadows")
+        role2 = discord.utils.get(user.guild.roles, name = "Dim Soul")
+        roles[roles.index(role2)] = role1
+        
+        await user.edit(roles)
+    elif messages == 100:
+        role1 = discord.utils.get(user.guild.roles, name = "Dim Soul")
+        role2 = discord.utils.get(user.guild.roles, name = "Bright Soul")
+        roles[roles.index(role2)] = role1
+
+        await user.edit(roles)
 
 # endregion XP Functions
 
@@ -310,211 +259,13 @@ async def ping(ctx):
 
 # A simple echoing command
 @client.command()
-async def echo(ctx, *args):
-    await ctx.message.delete()	# Generic deletion of command executed
-    
+async def echo(ctx, *args):    
     output = ""
     for word in args:
         output += word
         output += " "
     await ctx.send(output)
 
-# Delete messages in the channel executed (does not iterate)
-@client.command()
-async def clear(ctx, amount = 10):
-    await ctx.message.delete()	# Generic deletion of command executed
-    
-    amount = int(round(amount))
-    # Find the specified number of messages within the channel the command was executed and delete them.
-    if ctx.author.id in [409452148510949408, 469129991544766475]:
-        if amount > 100:
-            amount = 100
-        
-        await ctx.channel.purge(limit = amount)
-    else:
-        return
-        
-# Count how many messages the person specified has sent.
-@client.command()
-async def msgcount(ctx, person = ""):
-    await ctx.message.delete()	# Generic deletion of command executed.
-    
-    # Open User logs, and find the number of messages sent within the "messages" entry of the specified person.
-    with open('/home/pi/Ezenine/users.json', 'r') as f: 
-        users = json.load(f)
-            
-    if person == "":
-        await ctx.send(f"{ctx.author.mention}, your message count is: {str(users[str(ctx.author.id)]['messages'])}")
-    else:
-        target = client.get_user(int(person[2:-1].replace("!", "")))
-        
-        if target == ctx.author:	# Check if they mentioned themselves
-            await ctx.send(f"{ctx.author.mention}, your message count is: {str(users[str(ctx.author.id)]['messages'])}")
-        
-        if str(target.id) not in users:	# If this person isn't in the system for some reason
-            await update_data(users, target)
-            
-            with open('/home/pi/Ezenine/users.json', 'w') as f:
-                json.dump(users, f)
-        
-        await ctx.send(f"{ctx.author.mention}, {target.display_name}\'s message count is: {str(users[str(target.id)]['messages'])}")
-
-# Checks *limit* amount of messages in *channel*, and deletes those from *person*.
-@client.command()
-async def delfromuser(ctx, person, amount = 100, channel = None):
-    await ctx.message.delete()	# Generic deletion of command executed.
-
-    # Casting of inputs to integer and getting user from mention.
-    amount = int(amount)
-    target = client.get_user(int(person[2:-1].replace("!", "")))
-    
-    # Gets channel (if specified, otherwise it's channel executed in) and deletes messages found by *person*.
-    if ctx.author.id in [357943536722903043, 409452148510949408, 469129991544766475]:
-        if amount == 1:
-            amount = 2
-        
-        if amount > 100:
-            amount = 100
-        
-        if channel == None:
-            channel = ctx.channel
-        else:
-            channel = client.get_channel(int(channel[2:-1]))
-            
-        def isTarget(msg):
-            return msg.author == target
-        
-        await channel.purge(limit = int(round(amount)), check = isTarget, bulk = True)
-    else:
-        return
-
-# Sends a DM from the bot.
-@client.command()
-async def dm(ctx, person, *stuff):
-    await ctx.message.delete()	# Generic deletion of command executed.
-    
-    # Get user from mention, then sends them a DM of the message.
-    if ctx.author.id in [409452148510949408, 469129991544766475]:
-        try:
-            target = client.get_user(int(person[2:-1].replace("!", "")))
-            
-            output = ""
-            
-            for word in stuff:
-                output += word
-                output += " "
-            
-            await target.send(output)
-        except:
-            print("Cannot send DM.")
-        
-    else:
-        return
-
-# Sends a message from the bot in the specified channel.
-@client.command()
-async def masquerade(ctx, channel, *message):
-    await ctx.message.delete()	# Generic deletion of command executed.
-    
-    # Get channel from ID, then send the message.
-    destchannel = client.get_channel(int(channel[2:-1]))
-    
-    if (ctx.author.id in [409452148510949408, 469129991544766475, 467729503347671050]):
-        output = ""
-        
-        for word in message:
-            output += word
-            output += " "
-        
-        await destchannel.send(output)
-    else:
-        pass
-            
-# Bans the specified person, DMs the reason, and deletes messages from them going *duration* days back.
-@client.command()
-async def ban(ctx, person, duration, *reason):
-    await ctx.message.delete()	# Generic deletion of command executed.
-
-    # Obtain target from mention, ban them, then DM the reason why. Also deletes messages going back duration days.
-    target = client.get_user(int(person[2:-1].replace("!", "")))
-    
-    if any(entry in ["Perfected Darkness", "Personification of Death"] for entry in [role.name for role in ctx.author.roles]):        
-        readablereason = ""
-        
-        for word in reason:
-            readablereason += word
-            readablereason += " "
-        
-        if readablereason == "":
-            await target.send(f"You have been banned from {ctx.server}.")
-        else:
-            await target.send(f"You have been banned from {ctx.server}, the reason being: {readablereason}.")
-        
-        await ctx.guild.ban(target, reason = readablereason, delete_message_days = int(duration))
-
-        await client.get_channel(505781896014331905).send(f"{ctx.author.mention} has banned {target.mention} via me.")
-    else:
-        howbownah = await ctx.messages.reply("You don\'t have the authority to ban people!")
-        
-        await asyncio.sleep(2)
-        
-        await howbownah.delete()
-        
-# Kick the specified person and DM them the reason why.
-@client.command()
-async def kick(ctx, person, *reason):
-    await ctx.message.delete()	# Generic deletion of command executed.
-
-    # Obtain target, kick them, then DM them why.
-    target = client.get_user(int(person[2:-1].replace("!", "")))
-    
-    if any(entry in ["Shard of Oblivion", "Perfected Darkness", "Void", "Personification of Death"] for entry in [role.name for role in ctx.author.roles]):        
-        readablereason = ""
-        
-        for word in reason:
-            readablereason += word
-            readablereason += " "
-        
-        if readablereason == "":
-            await target.send(f"You have been kicked from {ctx.server}.")
-        else:
-            await target.send(f"You have been kicked from {ctx.server}, the reason being: {readablereason}.")
-            
-        await ctx.guild.kick(target, reason = readablereason)
-        
-        await client.get_channel(505781896014331905).send(f"{ctx.author.mention} has kicked {target.mention} via me.")
-    else:
-        howbownah = await ctx.author.send("You don\'t have the authority to kick people!")
-        
-        await asyncio.sleep(2)
-        
-        await howbownah.delete()
-           
-# Unbans the specified person. 
-@client.command()
-async def unban(ctx, person, *reason):
-    await ctx.message.delete()	# Generic deletion of command executed.
-    
-    target = client.get_user(int(person[2:-1].replace("!", "")))
-    
-    if any(entry in ["Shard of Oblivion", "Perfected Darkness", "Personification of Death"] for entry in [role.name for role in ctx.author.roles]):        
-        readablereason = ""
-        
-        for word in reason:
-            readablereason += word
-            readablereason += " "
-            
-        await ctx.guild.unban(target, reason = readablereason)
-
-        await client.get_channel(505781896014331905).send(f"{ctx.author.mention} unbanned {target.mention} via me.")
-
-    else:
-        howbownah = await ctx.author.send("You don't have the authority to unban people!")
-        
-        await asyncio.sleep(2)
-        
-        await howbownah.delete()
-        
 # Changes the "game" the bot is playing.
 @client.command()
 async def change_game(ctx, book = 0, type = "p", *game):
@@ -628,6 +379,204 @@ async def change_status(ctx, status):
     
     await purgekillmsg(ctx, killmsg)
         
+# Delete messages in the channel executed (does not iterate)
+@client.command()
+async def clear(ctx, amount = 10):
+    await ctx.message.delete()	# Generic deletion of command executed
+    
+    amount = int(round(amount))
+    # Find the specified number of messages within the channel the command was executed and delete them.
+    if ctx.author.id in [409452148510949408, 469129991544766475]:
+        if amount > 100:
+            amount = 100
+        elif amount < 1:
+            amount = 1
+        
+        await ctx.channel.purge(limit = amount)
+    else:
+        return
+        
+# Checks *limit* amount of messages in *channel*, and deletes those from *person*.
+@client.command()
+async def delfromuser(ctx, person, amount = 100, channel = None):
+    await ctx.message.delete()	# Generic deletion of command executed.
+
+    # Casting of inputs to integer and getting user from mention.
+    amount = int(amount)
+    target = client.get_user(int(person[2:-1].replace("!", "")))
+    
+    # Gets channel (if specified, otherwise it's channel executed in) and deletes messages found by *person*.
+    if ctx.author.id in [357943536722903043, 409452148510949408, 469129991544766475]:
+        if amount == 1:
+            amount = 2
+        
+        if amount > 100:
+            amount = 100
+        
+        if channel == None:
+            channel = ctx.channel
+        else:
+            channel = client.get_channel(int(channel[2:-1]))
+            
+        def isTarget(msg):
+            return msg.author == target
+        
+        await channel.purge(limit = int(round(amount)), check = isTarget, bulk = True)
+    else:
+        return
+
+# Sends a DM from the bot.
+@client.command()
+async def dm(ctx, person, *stuff):
+    await ctx.message.delete()	# Generic deletion of command executed.
+    
+    # Get user from mention, then sends them a DM of the message.
+    if ctx.author.id in [409452148510949408, 469129991544766475]:
+        try:
+            target = client.get_user(int(person[2:-1].replace("!", "")))
+            
+            output = ""
+            
+            for word in stuff:
+                output += word
+                output += " "
+            
+            await target.send(output)
+        except:
+            print("Cannot send DM.")
+        
+    else:
+        return
+
+# Sends a message from the bot in the specified channel.
+@client.command()
+async def masquerade(ctx, channel, *message):
+    await ctx.message.delete()	# Generic deletion of command executed.
+    
+    # Get channel from ID, then send the message.
+    destchannel = client.get_channel(int(channel[2:-1]))
+    
+    if (ctx.author.id in [409452148510949408, 469129991544766475, 467729503347671050]):
+        output = ""
+        
+        for word in message:
+            output += word
+            output += " "
+        
+        await destchannel.send(output)
+    else:
+        pass
+
+# Count how many messages the person specified has sent.
+@client.command()
+async def msgcount(ctx, person = ""):
+    await ctx.message.delete()	# Generic deletion of command executed.
+    
+    # Open User logs, and find the number of messages sent within the "messages" entry of the specified person.
+    with open('/home/pi/Ezenine/users.json', 'r') as f: 
+        users = json.load(f)
+            
+    if person == "":
+        await ctx.send(f"{ctx.author.mention}, your message count is: {str(users[str(ctx.author.id)]['messages'])}")
+    else:
+        target = client.get_user(int(person[2:-1].replace("!", "")))
+        
+        if target == ctx.author:	# Check if they mentioned themselves
+            await ctx.send(f"{ctx.author.mention}, your message count is: {str(users[str(ctx.author.id)]['messages'])}")
+        
+        if str(target.id) not in users:	# If this person isn't in the system for some reason
+            update_data(users, target, False)
+            
+            with open('/home/pi/Ezenine/users.json', 'w') as f:
+                json.dump(users, f)
+        
+        await ctx.send(f"{ctx.author.mention}, {target.display_name}\'s message count is: {str(users[str(target.id)]['messages'])}")
+
+# Bans the specified person, DMs the reason, and deletes messages from them going *duration* days back.
+@client.command()
+async def ban(ctx, person, duration, *reason):
+    await ctx.message.delete()	# Generic deletion of command executed.
+
+    # Obtain target from mention, ban them, then DM the reason why. Also deletes messages going back duration days.
+    target = client.get_user(int(person[2:-1].replace("!", "")))
+    
+    if any(entry in ["Perfected Darkness", "Personification of Death"] for entry in [role.name for role in ctx.author.roles]):        
+        readablereason = ""
+        
+        for word in reason:
+            readablereason += word
+            readablereason += " "
+        
+        if readablereason == "":
+            await target.send(f"You have been banned from {ctx.server}.")
+        else:
+            await target.send(f"You have been banned from {ctx.server}, the reason being: {readablereason}.")
+        
+        await ctx.guild.ban(target, reason = readablereason, delete_message_days = int(duration))
+
+        await client.get_channel(505781896014331905).send(f"{ctx.author.mention} has banned {target.mention} via me.")
+    else:
+        howbownah = await ctx.messages.reply("You don\'t have the authority to ban people!")
+        
+        await asyncio.sleep(2)
+        
+        await howbownah.delete()
+        
+# Kick the specified person and DM them the reason why.
+@client.command()
+async def kick(ctx, person, *reason):
+    await ctx.message.delete()	# Generic deletion of command executed.
+
+    # Obtain target, kick them, then DM them why.
+    target = client.get_user(int(person[2:-1].replace("!", "")))
+    
+    if any(entry in ["Shard of Oblivion", "Perfected Darkness", "Void", "Personification of Death"] for entry in [role.name for role in ctx.author.roles]):        
+        readablereason = ""
+        
+        for word in reason:
+            readablereason += word
+            readablereason += " "
+        
+        if readablereason == "":
+            await target.send(f"You have been kicked from {ctx.server}.")
+        else:
+            await target.send(f"You have been kicked from {ctx.server}, the reason being: {readablereason}.")
+            
+        await ctx.guild.kick(target, reason = readablereason)
+        
+        await client.get_channel(505781896014331905).send(f"{ctx.author.mention} has kicked {target.mention} via me.")
+    else:
+        howbownah = await ctx.author.send("You don\'t have the authority to kick people!")
+        
+        await asyncio.sleep(2)
+        
+        await howbownah.delete()
+           
+# Unbans the specified person. 
+@client.command()
+async def unban(ctx, person, *reason):
+    await ctx.message.delete()	# Generic deletion of command executed.
+    
+    target = client.get_user(int(person[2:-1].replace("!", "")))
+    
+    if any(entry in ["Shard of Oblivion", "Perfected Darkness", "Personification of Death"] for entry in [role.name for role in ctx.author.roles]):        
+        readablereason = ""
+        
+        for word in reason:
+            readablereason += word
+            readablereason += " "
+            
+        await ctx.guild.unban(target, reason = readablereason)
+
+        await client.get_channel(505781896014331905).send(f"{ctx.author.mention} unbanned {target.mention} via me.")
+
+    else:
+        howbownah = await ctx.author.send("You don't have the authority to unban people!")
+        
+        await asyncio.sleep(2)
+        
+        await howbownah.delete()
+        
 # Give specified roles to the mentioned person.
 @client.command()
 async def privilege(ctx, person, *roles):
@@ -669,47 +618,6 @@ async def privilege(ctx, person, *roles):
         
     dmignore = []
 
-# Remove specified roles from the mentioned person.
-@client.command()
-async def rescind(ctx, person, *roles):
-    # Generic Killmsg use for deletion of multiple messages.
-    killmsg = []
-    killmsg.append(ctx.message)
-    
-    # Generic DMignore use for ignoring DMs involved in a command.
-    global dmignore
-    
-    # Check for perms, get person from mention, then remove the specified role(s) from them.
-    target = ctx.guild.get_member(int(person[2:-1].replace("!", "")))
-    
-    rolelist = []
-    for role in roles:
-        rolelist.append(ctx.guild.get_role(int(role[3:-1])))
-    
-    if any(entry in ["Shard of Oblivion", "My Diamond Waifu", "Personification of Death"] for entry in [role.name for role in ctx.author.roles]):
-        dialog1 = await ctx.author.send("Enter the SAC (Standard Access Code): ")
-        killmsg.append(dialog1)
-        
-        SAC = await client.wait_for("message", check = pm_response(ctx))
-        dmignore.append(SAC)
-        
-        if SAC.content == sac:
-             await target.remove_roles(*rolelist)
-        else:
-            howbownah = await ctx.send("Incorrect Access code!")
-            killmsg.append(howbownah)
-            # sleepytime here would be 2, but all instances of error here use 2.
-    else:
-        howbownah = await ctx.send("You do not possess the required permissions!")
-        killmsg.append(howbownah)
-        # sleepytime here would be 2, but all instances of error here use 2.
-        
-    await asyncio.sleep(2)
-    
-    await purgekillmsg(ctx, killmsg)
-        
-    dmignore = []
-        
 # Reboot the Raspberry Pi
 @client.command()
 async def rebootsys(ctx):
@@ -769,6 +677,47 @@ async def rebootsys(ctx):
     
     await purgekillmsg(ctx, killmsg)
     
+    dmignore = []
+        
+# Remove specified roles from the mentioned person.
+@client.command()
+async def rescind(ctx, person, *roles):
+    # Generic Killmsg use for deletion of multiple messages.
+    killmsg = []
+    killmsg.append(ctx.message)
+    
+    # Generic DMignore use for ignoring DMs involved in a command.
+    global dmignore
+    
+    # Check for perms, get person from mention, then remove the specified role(s) from them.
+    target = ctx.guild.get_member(int(person[2:-1].replace("!", "")))
+    
+    rolelist = []
+    for role in roles:
+        rolelist.append(ctx.guild.get_role(int(role[3:-1])))
+    
+    if any(entry in ["Shard of Oblivion", "My Diamond Waifu", "Personification of Death"] for entry in [role.name for role in ctx.author.roles]):
+        dialog1 = await ctx.author.send("Enter the SAC (Standard Access Code): ")
+        killmsg.append(dialog1)
+        
+        SAC = await client.wait_for("message", check = pm_response(ctx))
+        dmignore.append(SAC)
+        
+        if SAC.content == sac:
+             await target.remove_roles(*rolelist)
+        else:
+            howbownah = await ctx.send("Incorrect Access code!")
+            killmsg.append(howbownah)
+            # sleepytime here would be 2, but all instances of error here use 2.
+    else:
+        howbownah = await ctx.send("You do not possess the required permissions!")
+        killmsg.append(howbownah)
+        # sleepytime here would be 2, but all instances of error here use 2.
+        
+    await asyncio.sleep(2)
+    
+    await purgekillmsg(ctx, killmsg)
+        
     dmignore = []
         
 # Chooses a random person within the server and summons them.

@@ -73,6 +73,9 @@ class YTDLSource(discord.PCMVolumeTransformer):
 
 # Class that defines a loop on a per-guild basis for a queue.
 class GuildPlayer:
+    # Something something makes attribute lookup faster bc memory saved (idfk).
+    __slots__ = ('_client', '_ctx', '_guild', 'queue', 'next', 'last', 'current', 'lastSource', 'postponedSource', 'np', 'volume')
+    
     def __init__(self, ctx: commands.Context):
         self._client = ctx.bot
         self._ctx = ctx
