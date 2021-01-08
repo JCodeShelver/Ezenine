@@ -1,8 +1,8 @@
 import discord
 from discord.ext import commands
-
 import asyncio
 from async_timeout import timeout
+import itertools
 import youtube_dl
 
 # Suppress noise about console usage from errors
@@ -86,6 +86,7 @@ class GuildPlayer:
         # These are things that allow me to block (literally) execution of code until something happens.
         self.next = asyncio.Event() # This is set to true once the song ends.
         self.last = asyncio.Event() # This is set to true when using the back command.
+        self.interrupt = asyncio.Event()
 
         self.volume = 0.5   # The default volume is 50%
         
@@ -93,37 +94,66 @@ class GuildPlayer:
 
         # These will be sources. 
         self.current = None
+        self.now = None
         self.lastSource = None
         self.postponedSource = None
 
         self._client.loop.create_task(self.gPlayerLoop())
 
+    # The actual method that is called per guild to iterate thorugh the queue.
     async def gPlayerLoop(self):
         await self._client.wait_until_ready()    # Wait until the Bot's cache is ready.
         
         self.last.clear()   # By default, we are not in the "backwards" mode.
+        self.interrupt.clear()  # By default, we are not playing a source right Goddamn now.
         
         while not self._client.is_closed():  # While the bot isn't offline:
             self.next.clear()   # Set the flag for going to the next song to false.
 
-            if not self.last.is_set():  # Are we in normal operation mode?
-                if not self._guild.voice_client.is_playing(): # Are we not playing an audio source? (Going to previous source and back leads to weird things.)
-                    try:
-                        # Wait for the next song. If we timeout cancel the player and disconnect...
-                        async with timeout(300):  # 5 minutes...
-                            source = await self.queue.get()
-                    except asyncio.TimeoutError:
-                        return self.destroy(self._ctx.guild)
+            if not (self.last.is_set() or self.interrupt.is_set()):  # Are we in normal operation mode?
+                try:
+                    # Wait for the next song. If we timeout cancel the player and disconnect...
+                    async with timeout(300):  # 5 minutes...
+                        source = await self.queue.get()
+                except asyncio.TimeoutError:
+                    return self.destroy(self._ctx.guild)
             
-            elif not self.lastSource:   # If we went to the last song, and already played that, then go to the song that was playing.
-                source = self.postponedSource   # Play the source we were originally.
-                self.lastSource = source    # Set the last source to the original source (prevent odd things)
-                self.postponedSource = None # Reset the postponed variable
-                self.last.clear()   # FINALLY LEAVE THIS FUCKING MESS
+            # Is the last flag true?
+            elif self.last.is_set() and not self.interrupt.is_set():
+                if self.lastSource.get("trigger"):     # Stage 2: If LS has a key: "trigger".
+                    source = self.postponedSource   # Play the source we were originally.
+                    
+                    self.postponedSource = None     # Reset the PPS var.
+                    
+                    # Get rid of "trigger" so if used AGAIN, it doesn't break everything. (a* --> a)
+                    self.lastSource.popitem()
+                    
+                    self.last.clear()   # FINALLY LEAVE THIS FUCKING MESS
+
+                else:   # Stage 1: use the previous song, and edit LS with a trigger phrase for Stage 2.
+                    source = self.lastSource    # Play LS.
+                    self.lastSource["trigger"] = True  # Signal value for Stage 2. (a --> a*)
+
+            # So the Interrupt flag must be true?
+            elif self.interrupt.is_set() and not self.last.is_set():
+                if not self.lastSource:     # Stage 2: If LS is None.
+                    source = self.postponedSource   # Play the original source.
+                    
+                    self.postponedSource = None     # Reset the PPS var.
+                    
+                    # Set LS to the now source, which also gets rid of "trigger". (a* --> NOW)
+                    self.lastSource = self.now
+                    
+                    self.now = None     # Kill the self.now var since it will cause an infinite loop otherwise.
+                    
+                    self.interrupt.clear()  # Leave this monstrosity.
+                else:
+                    source = self.now   # Play NOW.
+                    self.lastSource["trigger"] = True   # Signal value for Stage 2. (a --> a*)
             
-            else:   # If we went back to the last song:
-                source = self.lastSource
-                self.lastSource = None  # This isn't for functionality, it's actually a signal later on.
+            # So we're doing hybrid.
+            elif self.interrupt.is_set() and self.last.is_set():
+                pass
 
             if not isinstance(source, YTDLSource):
                 # Source was probably a stream (not downloaded)
@@ -144,10 +174,56 @@ class GuildPlayer:
                                                f'`{source.requester}`')
             await self.next.wait()  # Doesn't proceed until the next flag is set to true.
 
-            if not self.last.is_set():  # Did the song end because we wanted to go back? No?
+            # Heads up, this is a clusterfuck.
+            # Let us call the currently playing song: CURRENT
+            # Let us call the song played before the current song: PREVIOUS
+            # Let us call the first song in the queue (as of CURRENT being played): NEXT
+            # Let us call some possible song that interrupts CURRENT: NOW
+            #
+            #  When .back is called, CURRENT stops, and self.postponedSource is assigned to CURRENT.
+            #   self.lastSource, which stores PREVIOUS plays, then, after PREVIOUS is done, CURRENT,
+            #   which was cached, plays, and then back to normal operation.
+            #
+            #  When .now is called, CURRENT stops, and self.postponedSource is assigned to CURRENT.
+            #   self.now gets set to the specified source in the command, NOW. When NOW ends, 
+            #   CURRENT starts again, and then back to normal operation.
+            #
+            #  If PREVIOUS is playing, and .now is used, PREVIOUS stops, and self.lastSource is set
+            #   to PREVIOUS. NOW then plays, and when it ends, self.lastSource is used to go back to
+            #   PREVIOUS. After PREVIOUS plays, self.postponedSource is used to go back to CURRENT
+            #   as intended.
+            #
+            #  If NOW is playing, and .back is used, NOW stops, CURRENT plays, self.postponedSource
+            #   is cleared, and after CURRENT, NEXT plays as intended.
+            #
+            #   Last    Interrupt   WHEN            LS              PPS         Plays       Next Up
+            #   N       N           First           None            None        b           c           Unique
+            #   N       N           Normal          a               None        b           c           Default
+            #   N>Y     N           Back(1)         a*              b           a           b           Unique
+            #   Y>N     N           Back(2)         a               None        b           c           Back to Normal
+            #   N       N>Y         Now(1)          a*              b           NOW         b           Unique
+            #   N       Y>N         Now(2)          NOW             None        b           c           Normal, but different history.
+            #   Y       N>Y         Now(Back(1))(1) a               b           NOW         a           Unique
+            #   Y       Y>N         Now(Back(1))(2) NOW*            b           a           b           Unique
+            #   Y>N     N           Now(Back(2))    a               None        b           c           Back to Normal.
+            #   N>Y>N   Y>N         Back(Now(1))    a               None        b           c           Back to Normal (basically an abort NOW, since NOW is not chronological, it's artifical)
+
+            # Normal operation => LS updated
+            if not (self.last.is_set() or self.interrupt.is_set()):
                 self.lastSource = {'webpage_url': source.web_url, 'title' : source.title, 'requester' : source.requester}
-            elif self.lastSource:   # Oh so we ended the song, and lastSource is defined?
-                self.postponedSource = {'webpage_url': source.web_url, 'title' : source.title, 'requester' : source.requester}
+            
+            # Updates vars related to last and interrupt that have to take the value of what's currently playing.
+            else:
+                if not self.lastSource.get("trigger"):
+                    # Set PPS in Stage 1.
+                    self.postponedSource = {'webpage_url': source.web_url, 'title' : source.title, 'requester' : source.requester}
+
+                if self.last.is_set() and self.interrupt.is_set() and self.lastSource.get("trigger"):
+                    self.lastSource.popitem()
+                    if self.lastSource == {'webpage_url': source.web_url, 'title' : source.title, 'requester' : source.requester}:
+                        pass
+                    else:
+                        pass
             
             # Make sure the FFmpeg process is cleaned up.
             source.cleanup()
@@ -168,7 +244,7 @@ class GuildPlayer:
 class Voice(commands.Cog):
     # On initialization, set the client attribute to the bot and _queue attribute to a dict.
     def __init__(self, client: commands.Bot):
-        self.client = client
+        self._client = client
         self._queue = {}
 
     # When we kill a GuildPlayer instance...
@@ -202,12 +278,42 @@ class Voice(commands.Cog):
     async def self_mute_(self, ctx: commands.Context):
         await ctx.guild.change_voice_state(channel = ctx.voice_client.channel, self_mute = not ctx.me.voice.self_mute)
 
+    # Adds a song to the queue.
+    @commands.command(name = "play", aliases = ["add", "p"])
+    async def play_(self, ctx: commands.Context, *, url: str):
+        #await ctx.message.delete()
+        
+        async with ctx.typing():
+            player = self._getGuildPlayer(ctx)  # Get your GuildPlayer instance.
+
+            # Convert your pathetic url string into a buff info dictionary.
+            source = await YTDLSource.from_url(ctx, url, loop = self._client.loop)
+
+            await player.queue.put(source)  # Insert ;) the *buff* dictionary into the queue.
+    
+    # Plays a song right now damnit.
+    @commands.command(name = "now", aliases = ["interrupt, rush"])
+    async def now_(self, ctx: commands.Context, *, url: str):
+        if "DJ" in [role.name for role in ctx.author.roles]:
+            if not ctx.voice_client or not ctx.voice_client.is_connected():
+                return await ctx.send("I am not currently connected to a vc!", delete_after = 2)
+            
+            player = self._getGuildPlayer(ctx)
+            player.now = await YTDLSource.from_url(ctx, url, loop = self._client.loop)
+            player.interrupt.set()
+            
+            ctx.voice_client.stop()
+
+            await ctx.send(f"{ctx.author} has a song that they just need to share!")
+        else:
+            await ctx.send("You don\'t have permission to use that command!", delete_after = 2)
+
     # Goes back to the last song in the queue.
     @commands.command(name = "back", aliases = ["rewind"])
     async def back_(self, ctx: commands.Context):
         if "DJ" in [role.name for role in ctx.author.roles]:
             if not ctx.voice_client or not ctx.voice_client.is_connected():
-                return await ctx.send("I am not currently playing anything!")
+                return await ctx.send("I am not currently in a vc!", delete_after = 2)
             
             if ctx.voice_client.is_paused():    # Are we paused?
                 pass
@@ -225,19 +331,6 @@ class Voice(commands.Cog):
         else:
             await ctx.send("You don\'t have permission to use that command!", delete_after = 2)
         
-    # Adds a song to the queue.
-    @commands.command(name = "play", aliases = ["queue"])
-    async def queue_(self, ctx: commands.Context, *, url: str):
-        #await ctx.message.delete()
-        
-        async with ctx.typing():
-            player = self._getGuildPlayer(ctx)  # Get your GuildPlayer instance.
-
-            # Convert your pathetic url string into a buff info dictionary.
-            source = await YTDLSource.from_url(ctx, url, loop = self.client.loop)
-
-            await player.queue.put(source)  # Insert ;) the *buff* dictionary into the queue.
-
     # Skips the current playing song in the queue. 
     @commands.command(name = "skip", aliases = ["next", "scratch"])
     async def skip_(self, ctx: commands.Context):
@@ -274,19 +367,6 @@ class Voice(commands.Cog):
         else:
             await ctx.send("You don\'t have permission to use that command!", delete_after = 2)
         
-    # Stops the currently playing song in the queue, deletes the guild's instance of the GuildPlayer class, and disconnects from voice.
-    @commands.command(name = "stop", aliases = ["leave", "iiho"]) # iiho = 'Ight Im'ma head out
-    async def stop_(self, ctx: commands.Context):
-        if "DJ" in [role.name for role in ctx.author.roles]:
-            # No vc or playing of anything? Why stop what doesn't exist?
-            if not ctx.voice_client or not ctx.voice_client.is_connected():
-                return await ctx.send("I am not currently playing anything!", delete_after = 2)
-            
-            # Call the cleanup crew for our instance of GuildPlayer.
-            await self._cleanup(ctx.guild)
-        else:
-            await ctx.send("You don\'t have permission to use that command!", delete_after = 2)
-        
     # Resumes the current song in the queue.
     @commands.command(name = "resume", aliases = ["continue", "revive", "resurrect"])
     async def resume_(self, ctx: commands.Context):
@@ -303,8 +383,21 @@ class Voice(commands.Cog):
         else:
             await ctx.send("You don\'t have permission to use that command!", delete_after = 2)
 
+    # Stops the currently playing song in the queue, deletes the guild's instance of the GuildPlayer class, and disconnects from voice.
+    @commands.command(name = "stop", aliases = ["leave", "iiho"]) # iiho = 'Ight Im'ma head out
+    async def stop_(self, ctx: commands.Context):
+        if "DJ" in [role.name for role in ctx.author.roles]:
+            # No vc or playing of anything? Why stop what doesn't exist?
+            if not ctx.voice_client or not ctx.voice_client.is_connected():
+                return await ctx.send("I am not currently playing anything!", delete_after = 2)
+            
+            # Call the cleanup crew for our instance of GuildPlayer.
+            await self._cleanup(ctx.guild)
+        else:
+            await ctx.send("You don\'t have permission to use that command!", delete_after = 2)
+    
     # Adjusts the volume of the GuildPlayer instance associated with the guild.
-    @commands.command(name = "volume", aliases = ["vol"])
+    @commands.command(name = "volume", aliases = ["vol", "v"])
     async def volume_(self, ctx: commands.Context, volume: int):
         # Don't do anything if there's no difference, and make sure that if there is, that the value is valid.
         if "DJ" in [role.name for role in ctx.author.roles]:
@@ -350,7 +443,7 @@ class Voice(commands.Cog):
         await target.edit(voice_channel = channel)
 
     # Server mutes the specified person.
-    @commands.command(name = "mute", aliases = ["silence"])
+    @commands.command(name = "vmute", aliases = ["silence"])
     @commands.check_any(commands.has_guild_permissions(mute_members = True), commands.has_guild_permissions(administrator = True))
     async def mute_(self, ctx: commands.Context, person: str):
         target = await commands.MemberConverter().convert(ctx, person)
@@ -363,8 +456,53 @@ class Voice(commands.Cog):
         target = await commands.MemberConverter().convert(ctx, person)
         await target.edit(deafen = not target.voice.deaf)
 
+    # Returns up to the first five entries in the queue.
+    @commands.command(name = "q", aliases = ["qc", "queue"])
+    async def queue_(self, ctx: commands.Context):
+        await ctx.message.delete()
+
+        if not ctx.voice_client or not ctx.voice_client.is_connected():
+            return await ctx.send("I am not currently playing anything!")
+        
+        player = self._getGuildPlayer(ctx)
+        if player.queue.empty():
+            return await ctx.send("The queue is currently empty!")
+        
+        _head = list(itertools.islice(player.queue._queue, 0, 5))
+        _head_titles = '\n'.join(f'**`{_["title"]}`**' for _ in _head)
+        
+        if player.lastSource and not player.last.is_set():
+            _desc = f'**`{player.lastSource}`**\n{_head_titles}'
+        else:
+            _desc = _head_titles
+
+        embed = discord.Embed(title = f'Queue Info', description = _desc)
+
+        await ctx.send(embed = embed, delete_after = 20)
+
+    # Returns the currently playing song.
+    @commands.command(name = "whatis", aliases = ["np", "now_playing", "current", "curr", "playing"])
+    async def whatis_(self, ctx: commands.Context):
+        await ctx.message.delete()
+
+        if not ctx.voice_client or not ctx.voice_client.is_connected():
+            return await ctx.send("I am not currently connected to a vc!", delete_after = 2)
+        
+        player = self._getGuildPlayer(ctx)
+        if not player.current:
+            return await ctx.send("I am not not currently playing anything!", delete_after = 2)
+
+        try:
+            # Delete the old now playing message
+            await player.np.delete()
+        except discord.HTTPException:   # Catch an exception if it fails (e.g.: It got deleted already)
+            pass
+
+        player.np = await ctx.send(f"**Now Playing:** `{ctx.voice_client.source.title}` requested by "
+                                   f"`{ctx.voice_client.source.requester}`", delete_after = 20)
+
     # Makes sure that the client has a voice client.
-    @queue_.before_invoke
+    @play_.before_invoke
     @volume_.before_invoke
     async def _ensure_voice(self, ctx: commands.Context):
         if not ctx.voice_client:
