@@ -136,7 +136,7 @@ class GuildPlayer:
 
             # So the Interrupt flag must be true?
             elif self.interrupt.is_set() and not self.last.is_set():
-                if not self.lastSource:     # Stage 2: If LS is None.
+                if not self.lastSource.get("trigger"):     # Stage 2: If LS is None.
                     source = self.postponedSource   # Play the original source.
                     
                     self.postponedSource = None     # Reset the PPS var.
@@ -214,7 +214,7 @@ class GuildPlayer:
             
             # Updates vars related to last and interrupt that have to take the value of what's currently playing.
             else:
-                if not self.lastSource.get("trigger"):
+                if (self.last.is_set() ^ self.interrupt.is_set()) and not self.lastSource.get("trigger"):
                     # Set PPS in Stage 1.
                     self.postponedSource = {'webpage_url': source.web_url, 'title' : source.title, 'requester' : source.requester}
 
@@ -223,7 +223,7 @@ class GuildPlayer:
                     if self.lastSource == {'webpage_url': source.web_url, 'title' : source.title, 'requester' : source.requester}:
                         pass
                     else:
-                        pass
+                        self.interrupt.clear()
             
             # Make sure the FFmpeg process is cleaned up.
             source.cleanup()
@@ -299,8 +299,12 @@ class Voice(commands.Cog):
                 return await ctx.send("I am not currently connected to a vc!", delete_after = 2)
             
             player = self._getGuildPlayer(ctx)
-            player.now = await YTDLSource.from_url(ctx, url, loop = self._client.loop)
             player.interrupt.set()
+            
+            if player.now:  # If we're doing a Now in Now scenario...
+                player.lastSource = {'webpage_url': player.now.web_url, 'requester': player.now.requester, 'title': player.now.title}
+
+            player.now = await YTDLSource.from_url(ctx, url, loop = self._client.loop) # The name is like right now, but I'm left handed.
             
             ctx.voice_client.stop()
 
@@ -308,7 +312,7 @@ class Voice(commands.Cog):
         else:
             await ctx.send("You don\'t have permission to use that command!", delete_after = 2)
 
-    # Goes back to the last song in the queue.
+    # Goes back to the last song in the queue. A Back in Back section is not needed because of the way it is handled.
     @commands.command(name = "back", aliases = ["rewind"])
     async def back_(self, ctx: commands.Context):
         if "DJ" in [role.name for role in ctx.author.roles]:
