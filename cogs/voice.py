@@ -74,7 +74,7 @@ class YTDLSource(discord.PCMVolumeTransformer):
 # Class that defines a loop on a per-guild basis for a queue.
 class GuildPlayer:
     # Something something makes attribute lookup faster bc memory saved (idfk).
-    __slots__ = ('_client', '_ctx', '_guild', 'queue', 'next', 'last', 'current', 'lastSource', 'postponedSource', 'np', 'volume')
+    __slots__ = ('_client', '_ctx', '_guild', 'queue', 'next', 'last', 'interrupt', 'current', 'lastSource', 'postponedSource', 'now', 'np', 'volume')
     
     def __init__(self, ctx: commands.Context):
         self._client = ctx.bot
@@ -107,59 +107,43 @@ class GuildPlayer:
         self.last.clear()   # By default, we are not in the "backwards" mode.
         self.interrupt.clear()  # By default, we are not playing a source right Goddamn now.
         
+        # These two lines are ONLY here bc of my linter complaining about unboundedness.
+        sourceData = None
+        source = None
+        
         while not self._client.is_closed():  # While the bot isn't offline:
             self.next.clear()   # Set the flag for going to the next song to false.
 
             if not (self.last.is_set() or self.interrupt.is_set()):  # Are we in normal operation mode?
-                try:
-                    # Wait for the next song. If we timeout cancel the player and disconnect...
-                    async with timeout(300):  # 5 minutes...
-                        source = await self.queue.get()
-                except asyncio.TimeoutError:
-                    return self.destroy(self._ctx.guild)
-            
+                if self.postponedSource:
+                    sourceData = self.postponedSource
+                    
+                    self.postponedSource = None
+                else:
+                    try:
+                        # Wait for the next song. If we timeout cancel the player and disconnect...
+                        async with timeout(300):  # 5 minutes...
+                            sourceData = await self.queue.get()
+                    except asyncio.TimeoutError:
+                        return self.destroy(self._ctx.guild)
+                
             # Is the last flag true?
             elif self.last.is_set() and not self.interrupt.is_set():
-                if self.lastSource.get("trigger"):     # Stage 2: If LS has a key: "trigger".
-                    source = self.postponedSource   # Play the source we were originally.
-                    
-                    self.postponedSource = None     # Reset the PPS var.
-                    
-                    # Get rid of "trigger" so if used AGAIN, it doesn't break everything. (a* --> a)
-                    self.lastSource.popitem()
-                    
-                    self.last.clear()   # FINALLY LEAVE THIS FUCKING MESS
-
-                else:   # Stage 1: use the previous song, and edit LS with a trigger phrase for Stage 2.
-                    source = self.lastSource    # Play LS.
-                    self.lastSource["trigger"] = True  # Signal value for Stage 2. (a --> a*)
-
+                sourceData = self.lastSource    # Play LS.
+            
             # So the Interrupt flag must be true?
             elif self.interrupt.is_set() and not self.last.is_set():
-                if not self.lastSource.get("trigger"):     # Stage 2: If LS is None.
-                    source = self.postponedSource   # Play the original source.
-                    
-                    self.postponedSource = None     # Reset the PPS var.
-                    
-                    # Set LS to the now source, which also gets rid of "trigger". (a* --> NOW)
-                    self.lastSource = self.now
-                    
-                    self.now = None     # Kill the self.now var since it will cause an infinite loop otherwise.
-                    
-                    self.interrupt.clear()  # Leave this monstrosity.
-                else:
-                    source = self.now   # Play NOW.
-                    self.lastSource["trigger"] = True   # Signal value for Stage 2. (a --> a*)
+                sourceData = self.now   # Play NOW.
             
             # So we're doing hybrid.
             elif self.interrupt.is_set() and self.last.is_set():
-                pass
+                sourceData = self.now
 
-            if not isinstance(source, YTDLSource):
+            if not isinstance(sourceData, YTDLSource):
                 # Source was probably a stream (not downloaded)
                 # So we should regather to prevent stream expiration
                 try:
-                    source = await YTDLSource.prevent_my_pain(source, loop = self._client.loop)
+                    source = await YTDLSource.prevent_my_pain(sourceData, loop = self._client.loop)
                 except Exception as e:
                     await self._ctx.send(f'There was an error processing your song.\n'
                                              f'```css\n[{e}]\n```')
@@ -208,22 +192,37 @@ class GuildPlayer:
             #   Y>N     N           Now(Back(2))    a               None        b           c           Back to Normal.
             #   N>Y>N   Y>N         Back(Now(1))    a               None        b           c           Back to Normal (basically an abort NOW, since NOW is not chronological, it's artifical)
 
-            # Normal operation => LS updated
-            if not (self.last.is_set() or self.interrupt.is_set()):
-                self.lastSource = {'webpage_url': source.web_url, 'title' : source.title, 'requester' : source.requester}
-            
-            # Updates vars related to last and interrupt that have to take the value of what's currently playing.
-            else:
-                if (self.last.is_set() ^ self.interrupt.is_set()) and not self.lastSource.get("trigger"):
-                    # Set PPS in Stage 1.
-                    self.postponedSource = {'webpage_url': source.web_url, 'title' : source.title, 'requester' : source.requester}
+            # Update LS is PPS and NP are not the same (i.e. we are not doing special code nor do we have any flags high)
+            if not (self.last.is_set() or self.interrupt.is_set()) and not (self.postponedSource == sourceData):
+                self.lastSource = sourceData
 
-                if self.last.is_set() and self.interrupt.is_set() and self.lastSource.get("trigger"):
-                    self.lastSource.popitem()
-                    if self.lastSource == {'webpage_url': source.web_url, 'title' : source.title, 'requester' : source.requester}:
-                        pass
-                    else:
-                        self.interrupt.clear()
+            # Updates vars related to last and interrupt that have to take the value of what's currently playing.
+            if (self.last.is_set() ^ self.interrupt.is_set()):
+                # If we are in back, and a is playing.
+                if self.lastSource == sourceData:
+                    self.last.clear()
+                
+                #If we are in now, and now is playing.
+                elif self.now == sourceData:
+                    self.interrupt.clear()
+                    self.now = None
+                
+                # A Now-in-Now has occurred. Don't turn off the flag, just go around again.
+                elif self.postponedSource != sourceData and self.interrupt.is_set():
+                    pass
+
+                else:
+                    # Set PPS on 0E
+                    self.postponedSource = sourceData
+
+            # You may think that an if statement with a condition of the flags being an AND would lead to
+            # code inside that is seperate based on if Now occured after a Back, or vice versa. You are
+            # wrong. A Back in Now scenario is handled by skipping. It goes back to b. NOW songs are 
+            # treated as if they don't exist in the history (they're artifical).
+            elif self.last.is_set() and self.interrupt.is_set():
+                if self.now == sourceData:
+                    # It turns out, passing it to the code from self.last in this state works fine.
+                    self.interrupt.clear()
             
             # Make sure the FFmpeg process is cleaned up.
             source.cleanup()
@@ -281,7 +280,7 @@ class Voice(commands.Cog):
     # Adds a song to the queue.
     @commands.command(name = "play", aliases = ["add", "p"])
     async def play_(self, ctx: commands.Context, *, url: str):
-        #await ctx.message.delete()
+        await ctx.message.delete()
         
         async with ctx.typing():
             player = self._getGuildPlayer(ctx)  # Get your GuildPlayer instance.
@@ -301,9 +300,9 @@ class Voice(commands.Cog):
             player = self._getGuildPlayer(ctx)
             player.interrupt.set()
             
-            if player.now:  # If we're doing a Now in Now scenario...
-                player.lastSource = {'webpage_url': player.now.web_url, 'requester': player.now.requester, 'title': player.now.title}
-
+            # We have to handle circumstances where now is used in tandem with back. No special code
+            # is required for a now in now, as it will just overwrite player.now, and gets detected
+            # internally.
             player.now = await YTDLSource.from_url(ctx, url, loop = self._client.loop) # The name is like right now, but I'm left handed.
             
             ctx.voice_client.stop()
@@ -312,7 +311,7 @@ class Voice(commands.Cog):
         else:
             await ctx.send("You don\'t have permission to use that command!", delete_after = 2)
 
-    # Goes back to the last song in the queue. A Back in Back section is not needed because of the way it is handled.
+    # Goes back to the last song in the queue.
     @commands.command(name = "back", aliases = ["rewind"])
     async def back_(self, ctx: commands.Context):
         if "DJ" in [role.name for role in ctx.author.roles]:
@@ -326,8 +325,16 @@ class Voice(commands.Cog):
 
             # Get the GuildPlayer instance and set the last flag to true.
             player = self._getGuildPlayer(ctx)
-            player.last.set()
             
+            # We have to handle circumstances where back is used in tandem with now (you never know what they do
+            # to you child the first time.) A Back in Back scenario is handled by just skipping the song.
+
+            # We do however, need to handle a Back in Now scenario...
+            if player.interrupt.is_set():
+                player.interrupt.clear()
+            else:   # If we are in a normal to Back, DO IT.
+                player.last.set()
+
             # Stop it like normal.
             ctx.voice_client.stop()
 
@@ -469,18 +476,22 @@ class Voice(commands.Cog):
             return await ctx.send("I am not currently playing anything!")
         
         player = self._getGuildPlayer(ctx)
+        
         if player.queue.empty():
             return await ctx.send("The queue is currently empty!")
         
         _head = list(itertools.islice(player.queue._queue, 0, 5))
-        _head_titles = '\n'.join(f'**`{_["title"]}`**' for _ in _head)
+        _head_info = '\n'.join(f'{_head.index(_) + 1}. **`{_["title"]}`** requested by **`{_["requester"]}`**.' for _ in _head)
         
         if player.lastSource and not player.last.is_set():
-            _desc = f'**`{player.lastSource}`**\n{_head_titles}'
+            _desc = (f'**Last played: **`{player.lastSource["title"]}`** requested by **`{player.lastSource["requester"]}`**.\n\n'
+                     f'Now Playing: **`{player.current["title"]}`** requested by **`{player.current["requester"]}`**.\n\n'
+                     f'**{_head_info} **')
         else:
-            _desc = _head_titles
+            _desc = (f'**Now Playing: `{player.current["title"]}` requested by `{player.current["requester"]}`.\n\n'
+                     f'{_head_info}')
 
-        embed = discord.Embed(title = f'Queue Info', description = _desc)
+        embed = discord.Embed(title = 'Queue Info', description = _desc)
 
         await ctx.send(embed = embed, delete_after = 20)
 
