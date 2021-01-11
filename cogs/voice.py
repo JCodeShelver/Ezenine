@@ -158,39 +158,42 @@ class GuildPlayer:
                                                f'`{source.requester}`')
             await self.next.wait()  # Doesn't proceed until the next flag is set to true.
 
-            # Heads up, this is a clusterfuck.
-            # Let us call the currently playing song: CURRENT
-            # Let us call the song played before the current song: PREVIOUS
-            # Let us call the first song in the queue (as of CURRENT being played): NEXT
-            # Let us call some possible song that interrupts CURRENT: NOW
+            # This giant chunk of comments is to help understand it. It's pretty spaghetti, so don't 
+            # worry if it makes no goddamn cents. Heads up, this is a clusterfuck, this is at your 
+            # own risk, and I don't have any TL;DR.
+
+            # The following charts use "0" for None, pipe symbols (|) for a lack of change in the
+            # variable from the last step, a as some song (song a), b as some other song (song b) 
+            # that plays (or is played, or will be played) after a, and N as self.now, the song that
+            # interrupts what's playing to do it's own thing. LS is an abbreviation for
+            # self.lastSource, PPS is an abbreviation for self.postponedSource, and NP is an
+            # abbreviation for "Now Playing".
+            # Back-Now means that .now was invoked, then .back. A Now-Back is .back then  .now.
+
+            # Normal Flow.          Back Flow.              Now Flow (works when LS is set as well)
+            # When  LS  PPS NP      LS  PPS NP              LS  PPS NP
+            # 0S    0   0   a       0   0   a               0   0   a   :Interrupt 1
+            # 0E    a   |   X       a   |   X               |   a   X
+            # 1S    ¦   |   b       |   ¦   b   :Last 1     |   |   N
+            # 1E    b   |   X       |   b   X               |   ¦   X   :Interrupt 0
+            # 2S    ¦   |   c       |   |   a               |   0   a
+            # 2E    c   |   X       |   ¦   X   :Last 0     See Normal.
+            # ...............       |   0   b
+            #                       See Normal.
             #
-            #  When .back is called, CURRENT stops, and self.postponedSource is assigned to CURRENT.
-            #   self.lastSource, which stores PREVIOUS plays, then, after PREVIOUS is done, CURRENT,
-            #   which was cached, plays, and then back to normal operation.
-            #
-            #  When .now is called, CURRENT stops, and self.postponedSource is assigned to CURRENT.
-            #   self.now gets set to the specified source in the command, NOW. When NOW ends, 
-            #   CURRENT starts again, and then back to normal operation.
-            #
-            #  If PREVIOUS is playing, and .now is used, PREVIOUS stops, and self.lastSource is set
-            #   to PREVIOUS. NOW then plays, and when it ends, self.lastSource is used to go back to
-            #   PREVIOUS. After PREVIOUS plays, self.postponedSource is used to go back to CURRENT
-            #   as intended.
-            #
-            #  If NOW is playing, and .back is used, NOW stops, CURRENT plays, self.postponedSource
-            #   is cleared, and after CURRENT, NEXT plays as intended.
-            #
-            #   Last    Interrupt   WHEN            LS              PPS         Plays       Next Up
-            #   N       N           First           None            None        b           c           Unique
-            #   N       N           Normal          a               None        b           c           Default
-            #   N>Y     N           Back(1)         a*              b           a           b           Unique
-            #   Y>N     N           Back(2)         a               None        b           c           Back to Normal
-            #   N       N>Y         Now(1)          a*              b           NOW         b           Unique
-            #   N       Y>N         Now(2)          NOW             None        b           c           Normal, but different history.
-            #   Y       N>Y         Now(Back(1))(1) a               b           NOW         a           Unique
-            #   Y       Y>N         Now(Back(1))(2) NOW*            b           a           b           Unique
-            #   Y>N     N           Now(Back(2))    a               None        b           c           Back to Normal.
-            #   N>Y>N   Y>N         Back(Now(1))    a               None        b           c           Back to Normal (basically an abort NOW, since NOW is not chronological, it's artifical)
+            # Back-Now Flow.                                            Now-Back Flow.
+            # 0S    0   0   a                                           0   0   a
+            # 0E    a   |   X                                           a   |   X
+            # 1S    |   ¦   b   :Interrupt 1                            |   ¦   b   :Back 1
+            # 1E    |   b   X                                           |   b   X
+            # 2S    |   |   N   :Skip, not Last 1, and Interrupt 0      |   |   a   :Interrupt 1
+            # 2E    |   ¦   X                                           |   |   X
+            # 3S    |   0   b                                           |   |   N   :Interrupt 0
+            # 4S    See Normal.                                         |   |   X
+            # 4E                                                        |   |   a   :Back 0
+            # 5S                                                        |   ¦   X
+            # 5E                                                        |   0   b
+            #                                                           See Normal.
 
             # Update LS is PPS and NP are not the same (i.e. we are not doing special code nor do we have any flags high)
             if not (self.last.is_set() or self.interrupt.is_set()) and not (self.postponedSource == sourceData):
@@ -208,7 +211,7 @@ class GuildPlayer:
                     self.now = None
                 
                 # A Now-in-Now has occurred. Don't turn off the flag, just go around again.
-                elif self.postponedSource != sourceData and self.interrupt.is_set():
+                elif self.postponedSource and self.postponedSource != sourceData and self.interrupt.is_set():
                     pass
 
                 else:
@@ -330,8 +333,9 @@ class Voice(commands.Cog):
             # to you child the first time.) A Back in Back scenario is handled by just skipping the song.
 
             # We do however, need to handle a Back in Now scenario...
-            if player.interrupt.is_set():
+            if player.interrupt.is_set() and not player.last.is_set():
                 player.interrupt.clear()
+                self.now = None
             else:   # If we are in a normal to Back, DO IT.
                 player.last.set()
 
@@ -477,19 +481,29 @@ class Voice(commands.Cog):
         
         player = self._getGuildPlayer(ctx)
         
+        if not player.current:
+            return await ctx.send("I am not currently playing anything!", delete_after = 2)
+
         if player.queue.empty():
-            return await ctx.send("The queue is currently empty!")
+            if player.lastSource and not player.last.is_set():
+                _desc = (f'**Last played: **`{player.lastSource["title"]}` requested by `{player.lastSource["requester"]}`.\n\n'
+                        f'**Now Playing: **`{player.current["title"]}` requested by `{player.current["requester"]}`.\n\n'
+                        f'The queue is empty.')
+            else:
+                _desc = (f'**Now Playing: **`{player.current["title"]}` requested by `{player.current["requester"]}`.\n\n'
+                        f'The queue is empty.')
         
-        _head = list(itertools.islice(player.queue._queue, 0, 5))
-        _head_info = '\n'.join(f'{_head.index(_) + 1}. **`{_["title"]}`** requested by **`{_["requester"]}`**.' for _ in _head)
-        
-        if player.lastSource and not player.last.is_set():
-            _desc = (f'**Last played: **`{player.lastSource["title"]}`** requested by **`{player.lastSource["requester"]}`**.\n\n'
-                     f'Now Playing: **`{player.current["title"]}`** requested by **`{player.current["requester"]}`**.\n\n'
-                     f'**{_head_info} **')
         else:
-            _desc = (f'**Now Playing: `{player.current["title"]}` requested by `{player.current["requester"]}`.\n\n'
-                     f'{_head_info}')
+            _head = list(itertools.islice(player.queue._queue, 0, 5))
+            _head_info = '\n'.join(f'**{_head.index(_) + 1}. **`{_["title"]}` requested by `{_["requester"]}`.' for _ in _head)
+        
+            if player.lastSource and not player.last.is_set():
+                _desc = (f'**Last played: **`{player.lastSource["title"]}` requested by `{player.lastSource["requester"]}`.\n\n'
+                        f'**Now Playing: **`{player.current["title"]}` requested by `{player.current["requester"]}`.\n\n'
+                        f'{_head_info}.')
+            else:
+                _desc = (f'**Now Playing: **`{player.current["title"]}` requested by `{player.current["requester"]}`.\n\n'
+                        f'{_head_info}.')
 
         embed = discord.Embed(title = 'Queue Info', description = _desc)
 
